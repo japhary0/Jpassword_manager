@@ -50,3 +50,4 @@ sudo pacman -S wl-clipboard
 # For X11 Legacy Engine
 sudo pacman -S xclip
 # Jpassword_manager
+# Jpassword_manager
