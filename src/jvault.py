@@ -1,104 +1,141 @@
 import os
 import sys
 import time
+import threading
 import sqlite3
 import getpass
 import secrets
 import string
 import subprocess
+import shutil
 from typing import Optional, Tuple
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
-# Define the local SQLite database file name
-DB_FILE = "encrypted_vault.db"
+# =====================================================================
+# ANSI COLOR THEME CONSTANTS
+# =====================================================================
+
+class Colors:
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    RED     = "\033[1;31m"
+    GREEN   = "\033[1;32m"
+    YELLOW  = "\033[1;33m"
+    BLUE    = "\033[1;34m"
+    MAGENTA = "\033[1;35m"
+    CYAN    = "\033[1;36m"
+    GRAY    = "\033[0;90m"
+
+
+# =====================================================================
+# SYSTEM CLIPBOARD PURGE UTILITY
+# =====================================================================
+
+def purge_system_clipboard():
+    """Flushes the system clipboard selection across Wayland and X11 display servers."""
+    try:
+        if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
+            subprocess.run(['wl-copy', '--clear'], check=False)
+            subprocess.run(['wl-copy', ''], check=False)
+        elif shutil.which("xclip"):
+            subprocess.run(['xclip', '-selection', 'clipboard', '/dev/null'], check=False)
+            subprocess.run(['xclip', '-selection', 'primary', '/dev/null'], check=False)
+
+        print(f"\n{Colors.CYAN}[⚡] Volatile timer expired: System clipboard purged successfully.{Colors.RESET}\n{Colors.BOLD}Command >> {Colors.RESET}", end="", flush=True)
+    except Exception:
+        pass
+
+
+def synchronize_system_clipboard(payload: str):
+    """Pipes decrypted plaintext to system clipboard."""
+    try:
+        if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
+            process = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE)
+            process.communicate(input=payload.encode('utf-8'))
+        elif shutil.which("xclip"):
+            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+            process.communicate(input=payload.encode('utf-8'))
+    except Exception as err:
+        print(f"{Colors.RED}[-] Clipboard sync warning: {err}{Colors.RESET}")
+
+
+# =====================================================================
+# ADVANCED CRYPTOGRAPHIC ENGINE
+# =====================================================================
 
 class AdvancedCryptoEngine:
-    """
-    Handles all mathematical cryptographic mechanics including key derivation,
-    authenticated encryption, and integrity verification.
-    """
-    
-    @staticmethod
-    def derive_cryptographic_key(master_password: str, salt: bytes) -> bytes:
-        """
-        Uses PBKDF2-HMAC-SHA256 with 600,000 iterations to stretch the master password.
-        This hardens the password against GPU-accelerated brute-force attacks.
-        """
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,  # 32 bytes output = 256 bits (Perfect for AES-256)
-            salt=salt,
-            iterations=600000,
-        )
-        return kdf.derive(master_password.encode())
+    ITERATIONS = 600000
 
     @staticmethod
-    def encrypt_data(master_password: str, plaintext_string: str) -> Tuple[bytes, bytes, bytes]:
-        """
-        Encrypts a string using AES-256-GCM (Authenticated Encryption).
-        Generates a unique 16-byte salt and a 12-byte initialization vector (nonce).
-        """
-        # Cryptographically secure random generation for salt and nonce
+    def derive_key(master_password: str, salt: bytes) -> bytes:
+        """Derives a cryptographic key using PBKDF2-HMAC-SHA256."""
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=AdvancedCryptoEngine.ITERATIONS,
+        )
+        return kdf.derive(master_password.encode('utf-8'))
+
+    @staticmethod
+    def encrypt_data(master_password: str, plaintext: str) -> Tuple[bytes, bytes, bytes]:
+        """Encrypts data using AES-256-GCM."""
         salt = os.urandom(16)
         nonce = os.urandom(12)
+        key = AdvancedCryptoEngine.derive_key(master_password, salt)
         
-        # Derive the ephemeral key
-        key = AdvancedCryptoEngine.derive_cryptographic_key(master_password, salt)
-        
-        # Execute symmetric authenticated encryption
         aesgcm = AESGCM(key)
-        ciphertext = aesgcm.encrypt(nonce, plaintext_string.encode(), None)
+        ciphertext = aesgcm.encrypt(nonce, plaintext.encode('utf-8'), None)
         
-        # Secure Practice: Explicitly delete key reference from RAM allocation
         del key
         return salt, nonce, ciphertext
 
     @staticmethod
     def decrypt_data(master_password: str, salt: bytes, nonce: bytes, ciphertext: bytes) -> str:
-        """
-        Decrypts AES-256-GCM ciphertext. If the data has been altered/tampered with,
-        or if the master password is wrong, it raises a strict ValueError.
-        """
-        key = AdvancedCryptoEngine.derive_cryptographic_key(master_password, salt)
+        """Decrypts data encrypted with AES-256-GCM."""
+        key = AdvancedCryptoEngine.derive_key(master_password, salt)
         aesgcm = AESGCM(key)
+        
         try:
             decrypted_bytes = aesgcm.decrypt(nonce, ciphertext, None)
-            plaintext = decrypted_bytes.decode()
-            del key  # Wipe key reference immediately upon success
+            plaintext = decrypted_bytes.decode('utf-8')
+            del key
             return plaintext
-        except Exception as e:
-            del key  # Wipe key reference on failure to maintain RAM safety
-            raise ValueError("Decryption integrity verification failed! (Wrong Master Password or Tampered Data)") from e
+        except Exception:
+            del key
+            raise ValueError("Authentication tag mismatch or invalid master password.")
 
 
-class DatabaseManager:
-    """
-    Controls relational database connectivity, initialization schemas,
-    and structured data storage pipelines.
-    """
-    def __init__(self, database_path: str):
-        self.db_path = database_path
-        self._initialize_database_tables()
+# =====================================================================
+# DATABASE STORAGE ENGINE
+# =====================================================================
 
-    def _initialize_database_tables(self):
-        """Creates the relational framework with strict structural abstraction constraints."""
-        with sqlite3.connect(self.db_path) as conn:
-            # Table 1: Stores metadata validation signature to safely verify the user's master password
-            conn.execute("""
+class VaultDatabase:
+    def __init__(self, db_path: str = "encrypted_vault.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _get_connection(self):
+        return sqlite3.connect(self.db_path)
+
+    def _init_db(self):
+        """Initializes database schema and tables."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS vault_canary (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     salt BLOB NOT NULL,
                     nonce BLOB NOT NULL,
-                    canary_ciphertext BLOB NOT NULL
+                    ciphertext BLOB NOT NULL
                 )
             """)
-            # Table 2: Stores the actual encrypted login credentials
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS safe_credentials (
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS vault_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    resource_target TEXT UNIQUE NOT NULL,
+                    resource TEXT UNIQUE NOT NULL,
                     salt BLOB NOT NULL,
                     nonce BLOB NOT NULL,
                     ciphertext BLOB NOT NULL
@@ -106,231 +143,220 @@ class DatabaseManager:
             """)
             conn.commit()
 
-    def initialize_or_verify_master(self, master_password: str) -> bool:
-        """
-        Checks if a master password exists. If not, it creates a dynamic verification canary.
-        If it exists, it tries to decrypt it to grant or deny system access.
-        """
-        with sqlite3.connect(self.db_path) as conn:
+    def is_initialized(self) -> bool:
+        """Checks if a vault canary record exists."""
+        with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT salt, nonce, canary_ciphertext FROM vault_canary WHERE id = 1")
-            record = cursor.fetchone()
-            
-            if not record:
-                print("\033[1;33m[*] Creating a new secure local vault database...\033[0m")
-                # Encrypt a static test string (Canary) using the master password
-                salt, nonce, ciphertext = AdvancedCryptoEngine.encrypt_data(master_password, "VAULT_ACCESS_GRANTED")
-                conn.execute(
-                    "INSERT INTO vault_canary (id, salt, nonce, canary_ciphertext) VALUES (1, ?, ?, ?)",
-                    (salt, nonce, ciphertext)
-                )
-                conn.commit()
-                return True
-            else:
-                salt, nonce, ciphertext = record
-                try:
-                    # Attempt to decrypt the canary string to verify password validity
-                    AdvancedCryptoEngine.decrypt_data(master_password, salt, nonce, ciphertext)
-                    return True
-                except ValueError:
-                    return False
+            cursor.execute("SELECT id FROM vault_canary WHERE id = 1")
+            return cursor.fetchone() is not None
 
-    def store_credential_record(self, resource: str, salt: bytes, nonce: bytes, ciphertext: bytes):
-        """Commits the secure cryptographic outputs cleanly into the system database."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO safe_credentials (resource_target, salt, nonce, ciphertext) VALUES (?, ?, ?, ?)",
-                (resource.lower(), salt, nonce, ciphertext)
+    def initialize_master_canary(self, master_password: str):
+        """Creates the canary block for zero-knowledge password authentication."""
+        canary_text = "CANARY_VERIFICATION_BLOCK_OK"
+        salt, nonce, ciphertext = AdvancedCryptoEngine.encrypt_data(master_password, canary_text)
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO vault_canary (id, salt, nonce, ciphertext) VALUES (1, ?, ?, ?)",
+                (salt, nonce, ciphertext)
             )
             conn.commit()
 
-    def fetch_credential_record(self, resource: str) -> Optional[Tuple[bytes, bytes, bytes]]:
-        """Queries database for cryptographic blocks matching a specific application/website."""
-        with sqlite3.connect(self.db_path) as conn:
+    def verify_master_password(self, master_password: str) -> bool:
+        """Validates master password against the canary block."""
+        with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT salt, nonce, ciphertext FROM safe_credentials WHERE resource_target = ?", (resource.lower(),))
+            cursor.execute("SELECT salt, nonce, ciphertext FROM vault_canary WHERE id = 1")
+            row = cursor.fetchone()
+            if not row:
+                return False
+            
+            salt, nonce, ciphertext = row
+            try:
+                decrypted = AdvancedCryptoEngine.decrypt_data(master_password, salt, nonce, ciphertext)
+                return decrypted == "CANARY_VERIFICATION_BLOCK_OK"
+            except ValueError:
+                return False
+
+    def store_credential_record(self, resource: str, salt: bytes, nonce: bytes, ciphertext: bytes):
+        """Stores or updates an encrypted credential record."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO vault_records (resource, salt, nonce, ciphertext)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(resource) DO UPDATE SET
+                    salt=excluded.salt,
+                    nonce=excluded.nonce,
+                    ciphertext=excluded.ciphertext
+            """, (resource, salt, nonce, ciphertext))
+            conn.commit()
+
+    def fetch_credential_record(self, resource: str) -> Optional[Tuple[bytes, bytes, bytes]]:
+        """Retrieves salt, nonce, and ciphertext for a given resource."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT salt, nonce, ciphertext FROM vault_records WHERE resource = ?", (resource,))
             return cursor.fetchone()
 
-    def retrieve_all_resource_names(self):
-        """Lists targeted application profiles without leaking cryptographic payloads."""
-        with sqlite3.connect(self.db_path) as conn:
+    def list_monitored_resources(self):
+        """Returns all stored resource names."""
+        with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT resource_target FROM safe_credentials")
+            cursor.execute("SELECT resource FROM vault_records ORDER BY resource ASC")
             return [row[0] for row in cursor.fetchall()]
 
 
-def generate_high_entropy_password(length: int = 20) -> str:
-    """
-    Generates a secure password using Python's `secrets` engine.
-    Ensures at least one uppercase letter, one lowercase letter, one digit, and one special character.
-    """
-    if length < 14:
-        length = 14  # Enforce minimum industry-standard length threshold
-        
-    character_universe = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
-    while True:
-        proposed_password = ''.join(secrets.choice(character_universe) for _ in range(length))
-        # Ensure password complies with modern, strict security profiling policies
-        if (any(c.islower() for c in proposed_password)
-                and any(c.isupper() for c in proposed_password)
-                and any(c.isdigit() for c in proposed_password)
-                and any(c in "!@#$%^&*()-_=+" for c in proposed_password)):
-            return proposed_password
+# =====================================================================
+# UTILITIES & COLORFUL UI
+# =====================================================================
+
+def generate_high_entropy_password(length: int = 24) -> str:
+    """Generates a cryptographically strong random password."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-def synchronize_system_clipboard(decrypted_text: str):
-    """
-    Interfaces natively with display architectures.
-    Automatically detects Wayland or X11 to securely inject text into the system clipboard.
-    """
-    try:
-        if os.environ.get("WAYLAND_DISPLAY"):
-            # Execute native Wayland copy protocol
-            process = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE, text=True)
-            process.communicate(input=decrypted_text)
-        else:
-            # Fallback to legacy X11 clipboard pipeline architecture
-            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE, text=True)
-            process.communicate(input=decrypted_text)
-        print("\033[1;32m[+] Password successfully synced to system clipboard.\033[0m")
-    except Exception:
-        print("\033[1;31m[-] Clipboard system error: Install xclip or wl-clipboard via pacman.\033[0m")
-
-
-def purge_system_clipboard():
-    """Wipes the clipboard buffer to mitigate memory sniffing exposures."""
-    try:
-        if os.environ.get("WAYLAND_DISPLAY"):
-            subprocess.run(['wl-copy', '--clear'], check=True)
-        else:
-            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE, text=True)
-            process.communicate(input="")
-        print("\033[1;36m[⚡] System clipboard successfully flushed for memory optimization.\033[0m")
-    except Exception:
-        pass
-
-
-def display_secure_banner():
-    """Prints a high-visibility, colored ASCII Lock Banner tracking developer state."""
-    # We removed the 'r'. Now we double the backslashes (\\) 
-    # only where they are part of the ASCII art drawing.
-    banner = """\033[1;35m
-                               .--------.
-                              / .------. \\
-                             / /        \\ \\
-                             | |        | |
-                           __| |________| |_
-                         \033[1;32m [=================]
-                          |     \033[1;36mMR_J.FO     \033[1;32m|
-                          |       \033[1;33m[  ]      \033[1;32m|
-                          |       \033[1;33m/  \\      \033[1;32m|
-                          |      \033[1;33m'----'     \033[1;32m|
-                          |                 |
-                          [=================]\033[0m
-    \033[1;32m=================================================================
-         🛡️  ADVANCED PRIVACY VAULT CORE — HIGH SECURITY ENGINE      
-    =================================================================\033[0m"""
+def render_banner():
+    banner = f"""
+    {Colors.CYAN}.--------.{Colors.RESET}
+   {Colors.CYAN}/ .------. \\{Colors.RESET}
+  {Colors.CYAN}/ /        \\ \\{Colors.RESET}
+  {Colors.CYAN}| |        | |{Colors.RESET}
+{Colors.CYAN}__| |________| |__{Colors.RESET}
+{Colors.GREEN}[=================]{Colors.RESET}
+{Colors.GREEN}|     {Colors.YELLOW}MR_J.FO{Colors.GREEN}     |{Colors.RESET}
+{Colors.GREEN}|      {Colors.MAGENTA}[  ]{Colors.GREEN}       |{Colors.RESET}
+{Colors.GREEN}|      {Colors.MAGENTA}/  \\{Colors.GREEN}       |{Colors.RESET}
+{Colors.GREEN}|     {Colors.MAGENTA}'----'{Colors.GREEN}      |{Colors.RESET}
+{Colors.GREEN}|                 |{Colors.RESET}
+{Colors.GREEN}[=================]{Colors.RESET}
+{Colors.CYAN}================================================================={Colors.RESET}
+🛡  {Colors.BOLD}{Colors.GREEN}ADVANCED PRIVACY VAULT CORE — HIGH SECURITY ENGINE{Colors.RESET}
+{Colors.CYAN}================================================================={Colors.RESET}
+"""
     print(banner)
 
+
+# =====================================================================
+# MAIN RUNTIME LOOP
+# =====================================================================
+
 def main():
-    # Instantiate the database management layer
-    db = DatabaseManager(DB_FILE)
-    
-    # Render the custom security logo sequence
-    display_secure_banner()
-    
-    # Hide terminal input during Master Password query authentication
-    master_password = getpass.getpass("Provide Vault Master Password: ")
-    if not master_password:
-        print("\033[1;31m[-] Error: Master Password parameters cannot evaluate to empty.\033[0m")
+    render_banner()
+    db = VaultDatabase()
+
+    # Zero-knowledge initialization check
+    if not db.is_initialized():
+        print(f"{Colors.YELLOW}[*] Uninitialized Vault detected. Creating new Master Vault...{Colors.RESET}")
+        while True:
+            pwd1 = getpass.getpass(f"{Colors.CYAN}Set New Master Password: {Colors.RESET}")
+            pwd2 = getpass.getpass(f"{Colors.CYAN}Confirm Master Password: {Colors.RESET}")
+            if pwd1 == pwd2 and pwd1.strip():
+                db.initialize_master_canary(pwd1)
+                print(f"{Colors.GREEN}[+] Vault initialized with cryptographic canary block.{Colors.RESET}\n")
+                del pwd1, pwd2
+                break
+            print(f"{Colors.RED}[-] Passwords do not match or empty. Retry.{Colors.RESET}")
+
+    # Master Authentication Loop
+    attempts = 0
+    master_password = ""
+    while attempts < 3:
+        master_password = getpass.getpass(f"{Colors.BOLD}Provide Vault Master Password: {Colors.RESET}")
+        if db.verify_master_password(master_password):
+            print(f"{Colors.GREEN}[+] Cryptographic verification clear. Vault access unlocked.{Colors.RESET}\n")
+            break
+        else:
+            print(f"{Colors.RED}[-] Verification failed. Invalid Master Password.{Colors.RESET}")
+            attempts += 1
+
+    if attempts == 3:
+        print(f"{Colors.RED}[!] Too many failed authentication attempts. Terminating session.{Colors.RESET}")
         sys.exit(1)
 
-    # Perform structural cryptographic canary matching verification
-    if not db.initialize_or_verify_master(master_password):
-        print("\033[1;31m[-] CRITICAL ACCESS ALARM: Master Password signature validation failure.\033[0m")
-        sys.exit(1)
-        
-    print("\033[1;32m[+] Cryptographic verification clear. Vault access unlocked.\033[0m")
-
+    # Command Execution Interface Loop
     while True:
-        print("\n" + "\033[1;34m-\033[0m" * 65)
-        print("\033[1;36m[1]\033[0m Securely Encrypt and Store New Password")
-        print("\033[1;36m[2]\033[0m Generate a Random High-Entropy Password")
-        print("\033[1;36m[3]\033[0m Decrypt and Sync Password to Clipboard (Auto-Wipes)")
-        print("\033[1;36m[4]\033[0m List Monitored Resources")
-        print("\033[1;36m[5]\033[0m Terminate Secure Session")
-        print("\033[1;34m-\033[0m" * 65)
-        
-        user_choice = input("\033[1;32mCommand >> \033[0m").strip()
+        print(f"{Colors.GRAY}" + "-" * 65 + f"{Colors.RESET}")
+        print(f"[{Colors.CYAN}1{Colors.RESET}] {Colors.BOLD}Securely Encrypt and Store New Password{Colors.RESET}")
+        print(f"[{Colors.CYAN}2{Colors.RESET}] {Colors.BOLD}Generate a Random High-Entropy Password{Colors.RESET}")
+        print(f"[{Colors.CYAN}3{Colors.RESET}] {Colors.BOLD}Decrypt and Sync Password to Clipboard (Auto-Wipes){Colors.RESET}")
+        print(f"[{Colors.CYAN}4{Colors.RESET}] {Colors.BOLD}List Monitored Resources{Colors.RESET}")
+        print(f"[{Colors.CYAN}5{Colors.RESET}] {Colors.BOLD}Terminate Secure Session{Colors.RESET}")
+        print(f"{Colors.GRAY}" + "-" * 65 + f"{Colors.RESET}")
+
+        user_choice = input(f"{Colors.BOLD}Command >> {Colors.RESET}").strip()
 
         if user_choice == "1":
-            resource = input("Enter unique resource target identifier (e.g. protonmail): ").strip()
-            secret_string = getpass.getpass("Enter targeted password to hide: ")
-            
-            if not resource or not secret_string:
-                print("\033[1;31m[-] Error: Fields cannot evaluate to null.\033[0m")
+            resource = input(f"{Colors.CYAN}Enter resource identifier (e.g., github): {Colors.RESET}").strip().lower()
+            if not resource:
+                print(f"{Colors.RED}[-] Resource identifier cannot be blank.{Colors.RESET}")
                 continue
-                
-            salt, nonce, ciphertext = AdvancedCryptoEngine.encrypt_data(master_password, secret_string)
+            
+            pwd = getpass.getpass(f"{Colors.CYAN}Enter password for '{resource}': {Colors.RESET}")
+            salt, nonce, ciphertext = AdvancedCryptoEngine.encrypt_data(master_password, pwd)
             db.store_credential_record(resource, salt, nonce, ciphertext)
-            print(f"\033[1;32m[+] Credentials for '{resource}' safely committed into database storage.\033[0m")
-            del secret_string  # Destroy plaintext memory instantiation
+            del pwd
+            print(f"{Colors.GREEN}[+] Record for '{resource}' securely encrypted and saved.{Colors.RESET}")
 
         elif user_choice == "2":
-            try:
-                length_input = input("Enter length requirements (Default 20): ").strip()
-                selected_length = int(length_input) if length_input else 20
-            except ValueError:
-                selected_length = 20
+            generated_pwd = generate_high_entropy_password(24)
+            print(f"\n{Colors.CYAN}[🔑] High-Entropy Secret: {Colors.GREEN}{generated_pwd}{Colors.RESET}")
+            synchronize_system_clipboard(generated_pwd)
+            print(f"{Colors.GREEN}[+] Generated password synced to clipboard.{Colors.RESET}")
             
-            generated_secret = generate_high_entropy_password(selected_length)
-            print(f"\n\033[1;33m[!] Secure Gen String: {generated_secret}\033[0m")
-            print("[*] Notice: You can manually copy and save this asset using option [1].")
-            del generated_secret
+            threading.Thread(
+                target=lambda: (time.sleep(15), purge_system_clipboard()),
+                daemon=True
+            ).start()
+            print(f"{Colors.YELLOW}[*] Volatile timer activated. Clipboard will auto-wipe in 15 seconds...{Colors.RESET}")
+            del generated_pwd
 
         elif user_choice == "3":
-            resource = input("Enter resource target to retrieve: ").strip()
+            resource = input(f"{Colors.CYAN}Enter resource target to retrieve: {Colors.RESET}").strip().lower()
             cryptographic_record = db.fetch_credential_record(resource)
-            
+
             if not cryptographic_record:
-                print(f"\033[1;31m[-] Data query failure: No matches found for target '{resource}'.\033[0m")
+                print(f"{Colors.RED}[-] Data query failure: No matches found for target '{resource}'.{Colors.RESET}")
                 continue
-                
+
             salt, nonce, ciphertext = cryptographic_record
             try:
                 plaintext_decrypted = AdvancedCryptoEngine.decrypt_data(master_password, salt, nonce, ciphertext)
                 synchronize_system_clipboard(plaintext_decrypted)
-                
-                # Sleep sequence mimicking hardware volatile timer protections
-                print("\033[1;33m[*] Volatile timer activated. Clipboard will auto-wipe in 15 seconds...\033[0m")
-                time.sleep(15)
-                purge_system_clipboard()
-                
+                print(f"{Colors.GREEN}[+] Password decrypted and synced to system clipboard.{Colors.RESET}")
+
                 del plaintext_decrypted
+
+                threading.Thread(
+                    target=lambda: (time.sleep(15), purge_system_clipboard()),
+                    daemon=True
+                ).start()
+
+                print(f"{Colors.YELLOW}[*] Volatile timer activated. Clipboard will auto-wipe in 15 seconds...{Colors.RESET}")
+
             except ValueError as crypto_err:
-                print(f"\033[1;31m[-] Execution Error: {crypto_err}\033[0m")
+                print(f"{Colors.RED}[-] Execution Error: {crypto_err}{Colors.RESET}")
 
         elif user_choice == "4":
-            all_assets = db.retrieve_all_resource_names()
-            if not all_assets:
-                print("\033[1;33m[*] Database registers zero elements.\033[0m")
+            resources = db.list_monitored_resources()
+            if not resources:
+                print(f"{Colors.YELLOW}[*] No monitored resources registered in database.{Colors.RESET}")
             else:
-                print("\n\033[1;34m--- Currently Protected Identifiers ---\033[0m")
-                for index, item in enumerate(all_assets, 1):
-                    print(f"  [\033[1;36m{index}\033[0m] -> {item}")
+                print(f"\n{Colors.BLUE}--- Registered Vault Resources ---{Colors.RESET}")
+                for index, res in enumerate(resources, 1):
+                    print(f" {Colors.CYAN}{index}.{Colors.RESET} {res}")
+                print()
 
         elif user_choice == "5":
-            print("\033[1;33m[*] De-allocating cryptographic session variables. Vault closing safely.\033[0m")
+            print(f"{Colors.YELLOW}[*] Purging session memory and terminating secure session. Goodbye!{Colors.RESET}")
             del master_password
-            break
+            sys.exit(0)
+
         else:
-            print("\033[1;31m[-] Error: Unrecognized interaction sequence.\033[0m")
+            print(f"{Colors.RED}[-] Invalid command selection.{Colors.RESET}")
+
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        # Emergency exit clipboard flush sequence if user issues a Ctrl+C break signature
-        purge_system_clipboard()
-        print("\n\033[1;31m[-] Emergency abort signal intercepted. Session terminated safely.\033[0m")
-        sys.exit(0)
+    main()
