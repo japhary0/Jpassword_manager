@@ -1,54 +1,67 @@
-# Hardened Local Cryptographic Vault (CLI Password Manager)
+# 🛡️ Jpassword_manager | CLI Cryptographic Vault
 
-A local-first, zero-knowledge password management system engineered with strict secure-coding standards and defensive memory management. This utility eliminates remote cloud exposure vectors entirely, keeping credential assets isolated inside a cryptographically hardened local environment.
-
-## ⚙️ Core Security Architecture (07 Methodology)
-
-This project implements a defense-in-depth model to protect sensitive data at rest, in transit across local systems, and inside volatile memory (RAM):
-
-*   **Authenticated Encryption at Rest:** Utilizes **AES-256-GCM** to ensure absolute data confidentiality and cryptographic tamper-detection for all database records.
-*   **Key Stretching Defenses:** Implements **PBKDF2-HMAC-SHA256 with 600,000 iterations** to derive robust master keys from user passwords, heavily mitigating the threat of offline hardware-accelerated brute-force attacks.
-*   **Zero-Knowledge Master Authentication:** Employs an isolated database "Canary Block" encrypted with the derived master key. The system authenticates user identity by testing its ability to successfully decrypt this single canary record, ensuring raw passwords or static hashes are never stored on disk.
-*   **Volatile Memory Lifecycle Isolation:** Enforces active garbage collection and explicit variable de-allocation (`del` tracking) on keys and text variables immediately after use. It intercepts OS signals (such as `Ctrl+C`) to cleanly purge memory spaces upon unexpected session terminations.
-*   **Clipboard Exposure Mitigation:** Spawns decoupled Linux subprocesses via `wl-copy` (Wayland) or `xclip` (X11) to temporarily host decrypted credentials, tracking them with an asynchronous background loop that executes an absolute clipboard wipe after exactly 15 seconds.
-
-## 🛠️ Technical Stack & Dependencies
-*   **Language Runtime:** Python (Validated on interpreter v3.13 / v3.14 branches)
-*   **Cryptographic Primitives Engine:** Native `python-cryptography` module (OpenSSL backend)
-*   **Storage Framework:** Embedded `sqlite3` isolated relational pipeline
-*   **Linux Clipboard Drivers:** `wl-clipboard` / `xclip` core binaries
+A high-security, zero-knowledge local password management utility built in Python. Designed for Linux environments (Wayland & X11), it isolates credential assets inside an authenticated cryptographic store while enforcing strict volatile memory lifecycle controls.
 
 ---
 
-## 📈 Timeline & Milestones (08 Timeline & Milestones)
+## 🔥 Key Features
 
-The development lifecycle spanned a targeted 4-week implementation window:
-
-*   **Week 1: Core Cryptographic Architecture & Design**
-    *   *Action:* Built out the PBKDF2 key-stretching functions and the AES-256-GCM encryption/decryption pipeline.
-    *   *Milestone 1:* Cryptographic backend engine fully validated with no memory leaks.
-*   **Week 2: Database Layer & Canary Validation Mappings**
-    *   *Action:* Constructed the relational database schema in SQLite and coded the secure zero-knowledge canary check.
-    *   *Milestone 2:* Database layer initialization and secure authentication flow functional.
-*   **Week 3: Display Subsystem Integration & Clipboard Timing Loops**
-    *   *Action:* Implemented Linux subprocess pipelines for system clipboard interactions along with the 15-second tracking and wiping loop.
-    *   *Milestone 3:* Successful automated copy-and-wipe test execution on Wayland/X11.
-*   **Week 4: Integrity Testing, Code Optimization, & Portfolio Release**
-    *   *Action:* Conducted database tampering simulation attacks, verified memory purging routines, and formatted documentation for version control tracking.
-    *   *Milestone 4:* Project complete and repository published openly.
+* **Authenticated Encryption:** All vault assets are secured with **AES-256-GCM**, providing both confidentiality and integrity verification against database tampering.
+* **PBKDF2 Key Stretching:** Derived master keys use **600,000 iterations of PBKDF2-HMAC-SHA256** to heavily mitigate GPU-accelerated offline brute-force attempts.
+* **Zero-Knowledge Auth:** Uses a database canary record to validate your master password without ever saving raw passwords or static hashes to disk.
+* **Volatile Memory Defense:** Active variable de-allocation (`del` tracking) purges plaintexts from RAM immediately after use, backed by `SIGINT` interrupt handlers for emergency session termination.
+* **Auto-Flushing Clipboard Sync:** Temporarily pipes decrypted passwords to `wl-clipboard` or `xclip` and triggers an automated flush cycle after **15 seconds**.
 
 ---
 
-## 🚀 Getting Started
+## 🛠️ Tech Stack
 
-### Prerequisites
-Install the required system clipboard handlers based on your current Linux desktop environment:
+| Component | Technology |
+| :--- | :--- |
+| **Language** | Python 3.13 / 3.14+ |
+| **Crypto Primitive Engine** | `python-cryptography` (OpenSSL Backend) |
+| **Database** | Embedded SQLite3 (`encrypted_vault.db`) |
+| **Clipboard Integration** | `wl-clipboard` (Wayland) / `xclip` (X11) |
+
+## 💻 Quickstart & Multi-Distro Setup
+
+### 1. Install System Clipboard Dependencies
+
+`Jpassword_manager` uses `wl-clipboard` (Wayland) or `xclip` (X11) to temporarily sync decrypted secrets and perform automated memory flushes. Install the package corresponding to your distribution and display server:
+
+#### 🦅 Arch Linux & Garuda Linux
 ```bash
-# For Wayland (Garuda, Fedora, etc.)
+# Wayland (Garuda / Arch default)
 sudo pacman -S wl-clipboard
 
-# For X11 Legacy Engine
+# X11 / Xorg
 sudo pacman -S xclip
-# Jpassword_manager
-# Jpassword_manager
-# Jpassword_manager
+
+# Update repository index
+sudo apt update
+
+# Wayland
+sudo apt install wl-clipboard
+
+# X11 / Xorg (Kali / Debian default)
+sudo apt install xclip
+
+# Wayland (Fedora default)
+sudo dnf install wl-clipboard
+
+# X11 / Xorg
+sudo dnf install xclip
+
+# Clone the repository
+git clone [https://github.com/japhary0/Jpassword_manager.git](https://github.com/japhary0/Jpassword_manager.git)
+cd Jpassword_manager
+
+# Set up and activate isolated virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install cryptographic dependencies
+pip install -r requirements.txt
+
+# Launch the secure vault engine
+python3 src/jvault.py
