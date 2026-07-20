@@ -51,3 +51,4 @@ sudo pacman -S wl-clipboard
 sudo pacman -S xclip
 # Jpassword_manager
 # Jpassword_manager
+# Jpassword_manager
