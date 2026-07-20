@@ -1,3 +1,4 @@
+```markdown
 # 🛡️ Jpassword_manager | CLI Cryptographic Vault
 
 A high-security, zero-knowledge local password management utility built in Python. Designed for Linux environments (Wayland & X11), it isolates credential assets inside an authenticated cryptographic store while enforcing strict volatile memory lifecycle controls.
@@ -6,10 +7,10 @@ A high-security, zero-knowledge local password management utility built in Pytho
 
 ## 🔥 Key Features
 
-* **Authenticated Encryption:** All vault assets are secured with **AES-256-GCM**, providing both confidentiality and integrity verification against database tampering.
+* **Authenticated Encryption:** All vault assets are secured using **AES-256-GCM**, providing both confidentiality and integrity verification against database tampering.
 * **PBKDF2 Key Stretching:** Derived master keys use **600,000 iterations of PBKDF2-HMAC-SHA256** to heavily mitigate GPU-accelerated offline brute-force attempts.
 * **Zero-Knowledge Auth:** Uses a database canary record to validate your master password without ever saving raw passwords or static hashes to disk.
-* **Volatile Memory Defense:** Active variable de-allocation (`del` tracking) purges plaintexts from RAM immediately after use, backed by `SIGINT` interrupt handlers for emergency session termination.
+* **Volatile Memory Defense:** Active variable de-allocation (`del` tracking) purges plaintexts from RAM immediately after use, backed by non-blocking daemon thread controls.
 * **Auto-Flushing Clipboard Sync:** Temporarily pipes decrypted passwords to `wl-clipboard` or `xclip` and triggers an automated flush cycle after **15 seconds**.
 
 ---
@@ -23,11 +24,13 @@ A high-security, zero-knowledge local password management utility built in Pytho
 | **Database** | Embedded SQLite3 (`encrypted_vault.db`) |
 | **Clipboard Integration** | `wl-clipboard` (Wayland) / `xclip` (X11) |
 
+---
+
 ## 💻 Quickstart & Multi-Distro Setup
 
 ### 1. Install System Clipboard Dependencies
 
-`Jpassword_manager` uses `wl-clipboard` (Wayland) or `xclip` (X11) to temporarily sync decrypted secrets and perform automated memory flushes. Install the package corresponding to your distribution and display server:
+`Jpassword_manager` utilizes `wl-clipboard` (Wayland) or `xclip` (X11) to sync decrypted credentials and execute volatile memory purges. Install the appropriate package for your distribution and display server:
 
 #### 🦅 Arch Linux & Garuda Linux
 ```bash
@@ -37,6 +40,11 @@ sudo pacman -S wl-clipboard
 # X11 / Xorg
 sudo pacman -S xclip
 
+```
+
+#### 🐉 Kali Linux, Debian & Ubuntu
+
+```bash
 # Update repository index
 sudo apt update
 
@@ -46,12 +54,24 @@ sudo apt install wl-clipboard
 # X11 / Xorg (Kali / Debian default)
 sudo apt install xclip
 
+```
+
+#### 🎩 Fedora Linux
+
+```bash
 # Wayland (Fedora default)
 sudo dnf install wl-clipboard
 
 # X11 / Xorg
 sudo dnf install xclip
 
+```
+
+---
+
+### 2. Installation & Execution
+
+```bash
 # Clone the repository
 git clone [https://github.com/japhary0/Jpassword_manager.git](https://github.com/japhary0/Jpassword_manager.git)
 cd Jpassword_manager
@@ -65,3 +85,22 @@ pip install -r requirements.txt
 
 # Launch the secure vault engine
 python3 src/jvault.py
+
+```
+
+---
+
+## 🔒 Security Lifecycle Overview
+
+```
+ [ Master Password Input ]
+           │
+           ▼
+[ PBKDF2-HMAC-SHA256 (600,000 Iterations) ]
+           │
+           ▼
+[ AES-256-GCM Symmetric Key ]
+           │
+           ├──► Validate Canary Block (Zero-Knowledge Check)
+           │
+           └──► Decrypt Secret ──► Clipboard Sync (15s Threaded Timer) ──► Clipboard & Memory Purge
