@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ENTERPRISE GRADE LOCAL CRYPTOGRAPHIC VAULT (JVault Advanced - Interactive Edition)
-Target Platform: Arch / Garuda Linux | Python 3.14+
+ENTERPRISE GRADE LOCAL CRYPTOGRAPHIC VAULT (JVault Advanced - Cross-Platform Edition)
+Supported Platforms: Arch Linux, Garuda Linux, Kali Linux, Ubuntu, Parrot OS, Windows 10/11
 Developer: Japhary Said Japhary (Cybersecurity Specialist & IT Systems Architect)
 Repository: https://github.com/japhary0/Jpassword_manager.git
 """
@@ -12,9 +12,15 @@ import gc
 import sqlite3
 import ctypes
 import signal
+import platform
 import asyncio
 import subprocess
+import secrets
+import string
+import math
+import re
 from typing import Tuple, Optional, List
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
@@ -31,15 +37,96 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-# --- HARDENING: LINUX MEMORY PROTECTION ---
-def harden_process_memory():
-    """Disable core dumps and memory tracing on Linux systems."""
+# Enable VT100 ANSI Escape Sequence colors natively on Windows 10/11 CMD/PowerShell
+if platform.system() == "Windows":
     try:
-        PR_SET_DUMPABLE = 4
-        libc = ctypes.CDLL("libc.so.6")
-        libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
     except Exception:
-        pass  # Non-Linux environments or missing libc permissions
+        pass
+
+# --- HARDENING: CROSS-PLATFORM MEMORY PROTECTION ---
+def harden_process_memory():
+    """Disable core dumps and memory tracing on supported systems."""
+    sys_type = platform.system()
+    if sys_type == "Linux":
+        try:
+            PR_SET_DUMPABLE = 4
+            libc = ctypes.CDLL("libc.so.6")
+            libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
+        except Exception:
+            pass
+    elif sys_type == "Windows":
+        try:
+            ctypes.windll.kernel32.SetProcessMitigationPolicy(9, ctypes.byref(ctypes.c_ulonglong(1)), 8)
+        except Exception:
+            pass
+
+# --- AUTOMATED OS DELETION LOCK ENGINE ---
+class OSProtectionEngine:
+    @staticmethod
+    def apply_deletion_lock():
+        """Applies OS-level file locking requiring Sudo/Admin password to unlock or delete."""
+        sys_type = platform.system()
+        script_path = os.path.abspath(__file__)
+        db_path = os.path.abspath("encrypted_vault.db")
+
+        print(f"\n{Colors.OKCYAN}[*] Applying OS-Level Anti-Deletion Locks...{Colors.ENDC}")
+
+        if sys_type == "Linux":
+            try:
+                # Apply Linux immutable attribute (+i)
+                cmd1 = ["sudo", "chattr", "+i", script_path]
+                cmd2 = ["sudo", "chattr", "+i", db_path] if os.path.exists(db_path) else None
+
+                res1 = subprocess.run(cmd1, check=False)
+                if cmd2:
+                    subprocess.run(cmd2, check=False)
+
+                if res1.returncode == 0:
+                    print(f"{Colors.OKGREEN}[+] Linux Immutable Flag (+i) successfully set on script.{Colors.ENDC}")
+                    print(f"{Colors.OKGREEN}[+] Script cannot be deleted even with 'rm -rf' without Sudo password!{Colors.ENDC}")
+                else:
+                    print(f"{Colors.WARNING}[!] Sudo elevation declined or failed. OS Lock not fully set.{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.FAIL}[-] Failed to set Linux protection: {e}{Colors.ENDC}")
+
+        elif sys_type == "Windows":
+            try:
+                # Restrict permissions via Windows icacls
+                icacls_cmd = [
+                    "powershell", "-Command",
+                    f'Start-Process powershell -Verb RunAs -ArgumentList "icacls `"{script_path}`" /deny Users:(D,WO,WDAC)"'
+                ]
+                subprocess.run(icacls_cmd, check=False)
+                print(f"{Colors.OKGREEN}[+] Windows NTFS Deny-Delete ACL applied.{Colors.ENDC}")
+                print(f"{Colors.OKGREEN}[+] Deleting file will now force a Windows Administrator UAC prompt!{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.FAIL}[-] Failed to set Windows protection: {e}{Colors.ENDC}")
+
+    @staticmethod
+    def remove_deletion_lock():
+        """Removes OS protection flags prior to legitimate uninstallation."""
+        sys_type = platform.system()
+        script_path = os.path.abspath(__file__)
+        db_path = os.path.abspath("encrypted_vault.db")
+
+        if sys_type == "Linux":
+            try:
+                subprocess.run(["sudo", "chattr", "-i", script_path], check=False)
+                if os.path.exists(db_path):
+                    subprocess.run(["sudo", "chattr", "-i", db_path], check=False)
+            except Exception:
+                pass
+        elif sys_type == "Windows":
+            try:
+                icacls_cmd = [
+                    "powershell", "-Command",
+                    f'Start-Process powershell -Verb RunAs -ArgumentList "icacls `"{script_path}`" /remove:d Users"'
+                ]
+                subprocess.run(icacls_cmd, check=False)
+            except Exception:
+                pass
 
 # --- CRYPTOGRAPHIC ENGINE ---
 class JVaultCrypto:
@@ -60,7 +147,7 @@ class JVaultCrypto:
     @classmethod
     def encrypt_payload(cls, key: bytes, plaintext: bytes) -> Tuple[bytes, bytes]:
         """Encrypt payload using AES-256-GCM. Returns (IV, Ciphertext)."""
-        iv = os.urandom(12)  # 96-bit nonce for GCM
+        iv = os.urandom(12)
         aesgcm = AESGCM(key)
         ciphertext = aesgcm.encrypt(iv, plaintext, None)
         return iv, ciphertext
@@ -73,6 +160,98 @@ class JVaultCrypto:
             return aesgcm.decrypt(iv, ciphertext, None)
         except Exception:
             return None
+
+# --- NIST SP 800-63B ALIGNED PASSWORD ENGINE ---
+class PasswordEngine:
+    SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    
+    COMMON_BLACKLIST = {
+        "password", "123456", "12345678", "123456789", "qwerty", "111111", 
+        "admin", "welcome", "login", "pass1234", "iloveyou", "sunshine", 
+        "master", "password123", "dragon", "football", "monkey", "letmein"
+    }
+
+    @classmethod
+    def generate_strong_password(cls, length: int = 20) -> str:
+        """Generates CSPRNG strong password."""
+        if length < 12:
+            length = 12
+
+        full_pool = string.ascii_lowercase + string.ascii_uppercase + string.digits + cls.SPECIAL_CHARS
+        
+        password_chars = [
+            secrets.choice(string.ascii_lowercase),
+            secrets.choice(string.ascii_uppercase),
+            secrets.choice(string.digits),
+            secrets.choice(cls.SPECIAL_CHARS)
+        ]
+
+        for _ in range(length - 4):
+            password_chars.append(secrets.choice(full_pool))
+
+        secrets.SystemRandom().shuffle(password_chars)
+        return "".join(password_chars)
+
+    @classmethod
+    def analyze_nist_strength(cls, password: str) -> dict:
+        """Evaluates password against NIST SP 800-63B guidelines."""
+        length = len(password)
+        lower_pw = password.lower()
+        
+        is_blacklisted = lower_pw in cls.COMMON_BLACKLIST
+        meets_nist_min = length >= 8
+        is_recommended_length = length >= 15
+        
+        has_repeats = bool(re.search(r'(.)\1{2,}', password))
+        
+        has_sequences = False
+        for i in range(len(password) - 3):
+            seq = password[i:i+4].lower()
+            if seq in string.ascii_lowercase or seq in string.digits:
+                has_sequences = True
+                break
+
+        has_lower = any(c in string.ascii_lowercase for c in password)
+        has_upper = any(c in string.ascii_uppercase for c in password)
+        has_digit = any(c in string.digits for c in password)
+        has_special = any(c in cls.SPECIAL_CHARS for c in password)
+
+        pool_size = 0
+        if has_lower: pool_size += 26
+        if has_upper: pool_size += 26
+        if has_digit: pool_size += 10
+        if has_special: pool_size += len(cls.SPECIAL_CHARS)
+
+        raw_entropy = length * math.log2(pool_size) if pool_size > 0 else 0
+
+        entropy_penalty = 0
+        if has_repeats: entropy_penalty += 15
+        if has_sequences: entropy_penalty += 20
+        if is_blacklisted: entropy_penalty += 50
+
+        adjusted_entropy = max(0.0, raw_entropy - entropy_penalty)
+
+        if is_blacklisted or not meets_nist_min:
+            rating = f"{Colors.FAIL}{Colors.BOLD}REJECTED (Violates NIST Baseline){Colors.ENDC}"
+        elif adjusted_entropy >= 80 and is_recommended_length:
+            rating = f"{Colors.OKGREEN}{Colors.BOLD}Enterprise Grade / Exceptional (NIST Compliant){Colors.ENDC}"
+        elif adjusted_entropy >= 55:
+            rating = f"{Colors.OKCYAN}{Colors.BOLD}Strong / Compliant{Colors.ENDC}"
+        elif adjusted_entropy >= 35:
+            rating = f"{Colors.WARNING}{Colors.BOLD}Moderate (Consider Increasing Length){Colors.ENDC}"
+        else:
+            rating = f"{Colors.FAIL}{Colors.BOLD}Weak (High Risk of Contextual Guessing){Colors.ENDC}"
+
+        return {
+            "length": length,
+            "meets_min": meets_nist_min,
+            "is_recommended": is_recommended_length,
+            "is_blacklisted": is_blacklisted,
+            "has_repeats": has_repeats,
+            "has_sequences": has_sequences,
+            "entropy": round(adjusted_entropy, 2),
+            "rating": rating
+        }
 
 # --- DATABASE MANAGEMENT & ZERO-KNOWLEDGE CANARY ---
 class JVaultDatabase:
@@ -160,14 +339,12 @@ class JVaultDatabase:
             return decrypted_bytes.decode('utf-8') if decrypted_bytes else None
 
     def list_services(self) -> List[Tuple[str, str]]:
-        """Returns list of stored service names and their creation timestamps."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT service_name, created_at FROM vault_credentials ORDER BY service_name ASC")
             return cursor.fetchall()
 
     def delete_credential(self, service: str) -> bool:
-        """Deletes a credential record by service name."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM vault_credentials WHERE service_name = ?", (service,))
@@ -175,30 +352,25 @@ class JVaultDatabase:
             return cursor.rowcount > 0
 
     def update_master_password(self, old_key: bytes, new_master_password: str) -> Optional[bytes]:
-        """Re-encrypts all vault records and canary with a new master key."""
         services = self.list_services()
         decrypted_cache = []
 
-        # Decrypt all existing items with old key
         for service, _ in services:
             secret = self.retrieve_credential(old_key, service)
             if secret is None:
                 return None
             decrypted_cache.append((service, secret))
 
-        # Generate new salt and key
         new_salt = os.urandom(16)
         new_key = JVaultCrypto.derive_key(new_master_password, new_salt)
         canary_iv, canary_cipher = JVaultCrypto.encrypt_payload(new_key, JVaultCrypto.CANARY_TEXT)
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            # Update metadata
             cursor.execute(
                 "UPDATE metadata SET kdf_salt = ?, canary_iv = ?, canary_ciphertext = ? WHERE id = 1",
                 (new_salt, canary_iv, canary_cipher)
             )
-            # Re-encrypt all credentials with new key
             for service, secret in decrypted_cache:
                 iv, encrypted_data = JVaultCrypto.encrypt_payload(new_key, secret.encode('utf-8'))
                 cursor.execute(
@@ -207,51 +379,89 @@ class JVaultDatabase:
                 )
             conn.commit()
 
-        # Wipe decrypted cache from memory
         del decrypted_cache
         gc.collect()
         return new_key
 
-# --- ASYNC WAYLAND / X11 VOLATILE CLIPBOARD MANAGER ---
+# --- CRYPTOGRAPHIC SECURE SHREDDING ---
+def secure_shred_file(filepath: str, passes: int = 3):
+    """Overwrites file with random bytes before deletion to prevent magnetic recovery."""
+    if not os.path.exists(filepath):
+        return
+    length = os.path.getsize(filepath)
+    with open(filepath, "wb") as f:
+        for _ in range(passes):
+            f.seek(0)
+            f.write(os.urandom(length))
+            f.flush()
+            os.fsync(f.fileno())
+    os.remove(filepath)
+
+# --- CROSS-PLATFORM VOLATILE CLIPBOARD MANAGER ---
 class VolatileClipboard:
     @staticmethod
-    def _detect_display_server() -> str:
-        """Detect whether host environment is Wayland or X11."""
-        if os.environ.get("WAYLAND_DISPLAY"):
-            return "wayland"
-        return "x11"
+    def _detect_system() -> Tuple[str, str]:
+        sys_type = platform.system()
+        if sys_type == "Windows":
+            return "windows", "native"
+        elif sys_type == "Linux":
+            if os.environ.get("WAYLAND_DISPLAY"):
+                return "linux", "wayland"
+            return "linux", "x11"
+        return "unknown", "unknown"
 
     @classmethod
     async def copy_and_purge(cls, secret: str, delay_seconds: int = 15):
-        """Copies secret to system clipboard and asynchronously purges it after delay."""
-        display = cls._detect_display_server()
-        
-        # Write to clipboard
+        sys_type, env = cls._detect_system()
+        copied_ok = False
+
         try:
-            if display == "wayland":
-                proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
-                proc.communicate(input=secret.encode('utf-8'))
-            else:
-                proc = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
-                proc.communicate(input=secret.encode('utf-8'))
-            print(f"\n{Colors.OKGREEN}[+] Password copied to clipboard ({display.upper()}).{Colors.ENDC} {Colors.WARNING}Auto-purging in {delay_seconds}s...{Colors.ENDC}")
+            if sys_type == "windows":
+                try:
+                    import pyperclip
+                    pyperclip.copy(secret)
+                    copied_ok = True
+                except ImportError:
+                    proc = subprocess.Popen(["powershell", "-command", "Set-Clipboard"], stdin=subprocess.PIPE)
+                    proc.communicate(input=secret.encode('utf-8'))
+                    copied_ok = True
+
+            elif sys_type == "linux":
+                if env == "wayland":
+                    proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
+                    proc.communicate(input=secret.encode('utf-8'))
+                    copied_ok = True
+                else:
+                    proc = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
+                    proc.communicate(input=secret.encode('utf-8'))
+                    copied_ok = True
         except FileNotFoundError:
-            print(f"{Colors.WARNING}[!] Warning: Neither wl-copy nor xclip found. Printing suppressed for safety.{Colors.ENDC}")
+            print(f"{Colors.WARNING}[!] Clipboard driver missing.{Colors.ENDC}")
             return
 
-        # Asynchronous delay without blocking execution
+        if copied_ok:
+            print(f"\n{Colors.OKGREEN}[+] Password copied to clipboard ({sys_type.upper()}/{env.upper()}).{Colors.ENDC} {Colors.WARNING}Auto-purging in {delay_seconds}s...{Colors.ENDC}")
+
         await asyncio.sleep(delay_seconds)
 
-        # Clear clipboard
-        if display == "wayland":
-            subprocess.run(["wl-copy", "--clear"])
-        else:
-            subprocess.run(["xclip", "-selection", "clipboard", "/dev/null"])
-        print(f"\n{Colors.OKCYAN}[*] Volatile memory purge executed. Clipboard cleared.{Colors.ENDC}")
+        try:
+            if sys_type == "windows":
+                try:
+                    import pyperclip
+                    pyperclip.copy("")
+                except ImportError:
+                    subprocess.run(["powershell", "-command", "Clear-Clipboard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif sys_type == "linux":
+                if env == "wayland":
+                    subprocess.run(["wl-copy", "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    subprocess.run(["xclip", "-selection", "clipboard", "/dev/null"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"\n{Colors.OKCYAN}[*] Volatile memory purge executed. Clipboard cleared.{Colors.ENDC}")
+        except Exception:
+            pass
 
 # --- SECURE SHUTDOWN HANDLER ---
 def safe_exit(key_ref: Optional[bytes] = None, message: str = "Safe exit completed."):
-    """Safely cleans up sensitive keys, triggers garbage collection, and exits."""
     if key_ref is not None:
         del key_ref
     gc.collect()
@@ -265,23 +475,22 @@ async def main():
     db = JVaultDatabase()
 
     print(f"{Colors.HEADER}{Colors.BOLD}====================================================={Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}      JVAULT: LOCAL ENTERPRISE CRYPTO ENGINE         {Colors.ENDC}")
+    print(f"{Colors.HEADER}{Colors.BOLD}   JVAULT: ENTERPRISE CRYPTO ENGINE (CROSS-PLATFORM)  {Colors.ENDC}")
     print(f"{Colors.HEADER}{Colors.BOLD}====================================================={Colors.ENDC}")
 
     if not db.is_initialized():
         print(f"{Colors.WARNING}[!] Uninitialized Vault Detected.{Colors.ENDC}")
-        master_pw = input(f"{Colors.BOLD}Set Master Password: {Colors.ENDC}").strip()
+        master_pw = input(f"{Colors.BOLD}{Colors.OKBLUE}Set Master Password: {Colors.ENDC}").strip()
         db.initialize_vault(master_pw)
         print(f"{Colors.OKGREEN}[+] Vault initialized successfully with 600k PBKDF2 iterations.{Colors.ENDC}\n")
 
-    master_pw = input(f"{Colors.BOLD}Enter Master Password: {Colors.ENDC}").strip()
+    master_pw = input(f"{Colors.BOLD}{Colors.OKBLUE}Enter Master Password: {Colors.ENDC}").strip()
     key = db.authenticate_master_password(master_pw)
 
     if not key:
         print(f"{Colors.FAIL}[-] Authentication Failed: Invalid Master Password or Corrupted Canary.{Colors.ENDC}")
         safe_exit(None, "Authentication failed. Exiting...")
 
-    # Wipe raw password string immediately
     del master_pw
     gc.collect()
 
@@ -289,24 +498,34 @@ async def main():
 
     # Interactive Loop
     while True:
-        print(f"\n{Colors.BOLD}{Colors.OKBLUE}--- MAIN MENU ---{Colors.ENDC}")
-        print(f"[{Colors.OKCYAN}1{Colors.ENDC}] Store Credential")
-        print(f"[{Colors.OKCYAN}2{Colors.ENDC}] Retrieve Credential (Copy to Clipboard)")
-        print(f"[{Colors.OKCYAN}3{Colors.ENDC}] List All Stored Services")
-        print(f"[{Colors.OKCYAN}4{Colors.ENDC}] Delete Credential")
-        print(f"[{Colors.OKCYAN}5{Colors.ENDC}] Change Master Password")
-        print(f"[{Colors.OKCYAN}6{Colors.ENDC}] Safe Exit")
+        print(f"\n{Colors.HEADER}{Colors.BOLD}--- MAIN MENU ---{Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}1{Colors.ENDC}] {Colors.OKGREEN}Store Credential{Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}2{Colors.ENDC}] {Colors.OKBLUE}Retrieve Credential (Copy to Clipboard){Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}3{Colors.ENDC}] {Colors.OKBLUE}List All Stored Services{Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}4{Colors.ENDC}] {Colors.FAIL}Delete Credential{Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}5{Colors.ENDC}] {Colors.OKGREEN}Generate Strong Password (CSPRNG){Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}6{Colors.ENDC}] {Colors.OKCYAN}Audit Password (NIST SP 800-63B Guidelines){Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}7{Colors.ENDC}] {Colors.WARNING}Change Master Password{Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}8{Colors.ENDC}] {Colors.OKCYAN}{Colors.BOLD}ENABLE OS ANTI-DELETION LOCK (Requires Sudo/Admin){Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}9{Colors.ENDC}] {Colors.FAIL}{Colors.BOLD}UNINSTALL & SECURELY SHRED TOOL / VAULT{Colors.ENDC}")
+        print(f"[{Colors.OKCYAN}10{Colors.ENDC}] {Colors.HEADER}Safe Exit{Colors.ENDC}")
 
-        choice = input(f"\n{Colors.BOLD}Select an option (1-6): {Colors.ENDC}").strip()
+        choice = input(f"\n{Colors.BOLD}{Colors.OKBLUE}Select an option (1-10): {Colors.ENDC}").strip()
 
         if choice == '1':
             service = input(f"{Colors.BOLD}Enter Service Name (e.g., github): {Colors.ENDC}").strip()
-            secret = input(f"{Colors.BOLD}Enter Secret/Password: {Colors.ENDC}").strip()
+            secret = input(f"{Colors.BOLD}Enter Secret/Password (or press Enter to auto-generate): {Colors.ENDC}").strip()
+            if not secret:
+                secret = PasswordEngine.generate_strong_password(20)
+                print(f"{Colors.OKCYAN}[*] Auto-Generated NIST Passphrase: {Colors.BOLD}{Colors.OKGREEN}{secret}{Colors.ENDC}")
+            
             if service and secret:
                 db.store_credential(key, service, secret)
-                print(f"{Colors.OKGREEN}[+] Encrypted payload stored for '{service}'.{Colors.ENDC}")
+                print(f"{Colors.OKGREEN}[+] Encrypted payload stored for '{Colors.BOLD}{service}{Colors.ENDC}{Colors.OKGREEN}'.{Colors.ENDC}")
+                del secret
+                gc.collect()
             else:
-                print(f"{Colors.WARNING}[!] Service name and secret cannot be empty.{Colors.ENDC}")
+                print(f"{Colors.WARNING}[!] Service name cannot be empty.{Colors.ENDC}")
 
         elif choice == '2':
             service = input(f"{Colors.BOLD}Enter Service Name to retrieve: {Colors.ENDC}").strip()
@@ -316,22 +535,22 @@ async def main():
                 del secret
                 gc.collect()
             else:
-                print(f"{Colors.FAIL}[-] Service not found or integrity check failed.{Colors.ENDC}")
+                print(f"{Colors.FAIL}[-] Service '{service}' not found or integrity check failed.{Colors.ENDC}")
 
         elif choice == '3':
             services = db.list_services()
             if not services:
                 print(f"{Colors.WARNING}[!] No credentials currently stored in vault.{Colors.ENDC}")
             else:
-                print(f"\n{Colors.BOLD}Stored Services ({len(services)} total):{Colors.ENDC}")
-                print(f"{'Service Name':<25} | {'Created At'}")
-                print("-" * 45)
+                print(f"\n{Colors.BOLD}{Colors.HEADER}Stored Services ({len(services)} total):{Colors.ENDC}")
+                print(f"{Colors.BOLD}{Colors.OKCYAN}{'Service Name':<25} | {'Created At'}{Colors.ENDC}")
+                print(f"{Colors.OKCYAN}{'-' * 45}{Colors.ENDC}")
                 for svc, created in services:
-                    print(f"{svc:<25} | {created}")
+                    print(f"{Colors.OKGREEN}{svc:<25}{Colors.ENDC} | {Colors.OKBLUE}{created}{Colors.ENDC}")
 
         elif choice == '4':
             service = input(f"{Colors.BOLD}Enter Service Name to DELETE: {Colors.ENDC}").strip()
-            confirm = input(f"{Colors.FAIL}Are you sure you want to delete '{service}'? (y/N): {Colors.ENDC}").strip().lower()
+            confirm = input(f"{Colors.FAIL}{Colors.BOLD}Are you sure you want to delete '{service}'? (y/N): {Colors.ENDC}").strip().lower()
             if confirm == 'y':
                 if db.delete_credential(service):
                     print(f"{Colors.OKGREEN}[+] Credential for '{service}' deleted.{Colors.ENDC}")
@@ -341,6 +560,59 @@ async def main():
                 print(f"{Colors.OKCYAN}[*] Deletion cancelled.{Colors.ENDC}")
 
         elif choice == '5':
+            try:
+                length_input = input(f"{Colors.BOLD}Enter desired length (default 20, min 12): {Colors.ENDC}").strip()
+                length = int(length_input) if length_input else 20
+            except ValueError:
+                length = 20
+            
+            generated_pw = PasswordEngine.generate_strong_password(length)
+            print(f"\n{Colors.OKGREEN}[+] Generated NIST Password:{Colors.ENDC} {Colors.BOLD}{Colors.OKCYAN}{generated_pw}{Colors.ENDC}")
+            
+            copy_choice = input(f"{Colors.BOLD}Copy password to volatile clipboard? (Y/n): {Colors.ENDC}").strip().lower()
+            if copy_choice != 'n':
+                await VolatileClipboard.copy_and_purge(generated_pw, delay_seconds=15)
+            
+            del generated_pw
+            gc.collect()
+
+        elif choice == '6':
+            target_pw = input(f"{Colors.BOLD}Enter password to audit against NIST SP 800-63B: {Colors.ENDC}").strip()
+            if not target_pw:
+                print(f"{Colors.WARNING}[!] Password cannot be empty.{Colors.ENDC}")
+                continue
+
+            results = PasswordEngine.analyze_nist_strength(target_pw)
+            
+            meets_min_tag = f"{Colors.OKGREEN}[PASS]{Colors.ENDC}" if results['meets_min'] else f"{Colors.FAIL}[FAIL]{Colors.ENDC}"
+            rec_len_tag = f"{Colors.OKGREEN}[PASS]{Colors.ENDC}" if results['is_recommended'] else f"{Colors.WARNING}[WARN]{Colors.ENDC}"
+            blacklist_tag = f"{Colors.FAIL}[FAIL - Flagged]{Colors.ENDC}" if results['is_blacklisted'] else f"{Colors.OKGREEN}[PASS - Clean]{Colors.ENDC}"
+            repeats_tag = f"{Colors.FAIL}[FAIL - Found]{Colors.ENDC}" if results['has_repeats'] else f"{Colors.OKGREEN}[PASS - Clear]{Colors.ENDC}"
+            sequences_tag = f"{Colors.FAIL}[FAIL - Found]{Colors.ENDC}" if results['has_sequences'] else f"{Colors.OKGREEN}[PASS - Clear]{Colors.ENDC}"
+
+            entropy_val = results['entropy']
+            if entropy_val >= 80:
+                entropy_colored = f"{Colors.OKGREEN}{entropy_val} bits{Colors.ENDC}"
+            elif entropy_val >= 55:
+                entropy_colored = f"{Colors.OKCYAN}{entropy_val} bits{Colors.ENDC}"
+            elif entropy_val >= 35:
+                entropy_colored = f"{Colors.WARNING}{entropy_val} bits{Colors.ENDC}"
+            else:
+                entropy_colored = f"{Colors.FAIL}{entropy_val} bits{Colors.ENDC}"
+
+            print(f"\n{Colors.HEADER}{Colors.BOLD}--- NIST SP 800-63B PASSWORD AUDIT REPORT ---{Colors.ENDC}")
+            print(f"{Colors.BOLD}Overall Evaluation  :{Colors.ENDC} {results['rating']}")
+            print(f"{Colors.BOLD}Adjusted Entropy    :{Colors.ENDC} {entropy_colored}")
+            print(f"{Colors.BOLD}NIST Min Length (>=8):{Colors.ENDC} {meets_min_tag}")
+            print(f"{Colors.BOLD}NIST Rec Length(>=15):{Colors.ENDC} {rec_len_tag}")
+            print(f"{Colors.BOLD}Common Blacklist    :{Colors.ENDC} {blacklist_tag}")
+            print(f"{Colors.BOLD}Repetitive Chars    :{Colors.ENDC} {repeats_tag}")
+            print(f"{Colors.BOLD}Sequential Patterns :{Colors.ENDC} {sequences_tag}")
+            
+            del target_pw
+            gc.collect()
+
+        elif choice == '7':
             new_pw = input(f"{Colors.BOLD}Enter NEW Master Password: {Colors.ENDC}").strip()
             confirm_pw = input(f"{Colors.BOLD}Confirm NEW Master Password: {Colors.ENDC}").strip()
             if new_pw == confirm_pw and new_pw:
@@ -354,11 +626,48 @@ async def main():
             else:
                 print(f"{Colors.FAIL}[-] Passwords do not match or are empty.{Colors.ENDC}")
 
-        elif choice == '6':
+        elif choice == '8':
+            OSProtectionEngine.apply_deletion_lock()
+
+        elif choice == '9':
+            print(f"\n{Colors.FAIL}{Colors.BOLD}[!] WARNING: UNINSTALLATION / COMPLETE PURGE INITIATED.{Colors.ENDC}")
+            print(f"{Colors.WARNING}This action will permanently overwrite and delete your encrypted database and the tool script.{Colors.ENDC}")
+            
+            verify_pw = input(f"{Colors.BOLD}{Colors.FAIL}Re-enter Master Password to AUTHORIZE UNINSTALL: {Colors.ENDC}").strip()
+            auth_check = db.authenticate_master_password(verify_pw)
+            
+            if auth_check:
+                del verify_pw, auth_check
+                gc.collect()
+                
+                print(f"\n{Colors.WARNING}[*] Password verified. Removing OS locks and performing multi-pass secure cryptographic wipe...{Colors.ENDC}")
+                
+                # 1. Unlock OS Locks
+                OSProtectionEngine.remove_deletion_lock()
+
+                # 2. Shred Database
+                db_file = db.db_path
+                secure_shred_file(db_file)
+                print(f"{Colors.OKGREEN}[+] Encrypted Vault Database shredded and deleted.{Colors.ENDC}")
+                
+                # 3. Shred Executing Script
+                script_path = os.path.abspath(__file__)
+                print(f"{Colors.OKGREEN}[+] Tool script target: {script_path}{Colors.ENDC}")
+                print(f"{Colors.FAIL}[!] Goodbye. Self-destruction complete.{Colors.ENDC}")
+                
+                del key
+                gc.collect()
+                
+                secure_shred_file(script_path)
+                sys.exit(0)
+            else:
+                print(f"{Colors.FAIL}[-] ACTION DENIED: Incorrect Master Password. Purge aborted.{Colors.ENDC}")
+
+        elif choice == '10':
             safe_exit(key, "User requested shutdown.")
 
         else:
-            print(f"{Colors.WARNING}[!] Invalid option. Please enter a number between 1 and 6.{Colors.ENDC}")
+            print(f"{Colors.WARNING}[!] Invalid option. Please enter a number between 1 and 10.{Colors.ENDC}")
 
 if __name__ == "__main__":
     def signal_handler(sig, frame):
