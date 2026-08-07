@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ENTERPRISE GRADE LOCAL CRYPTOGRAPHIC VAULT (JVault Advanced - Cross-Platform Edition)
-Supported Platforms: Arch Linux, Garuda Linux, Kali Linux, Ubuntu, Parrot OS, Windows 10/11
+ENTERPRISE GRADE LOCAL CRYPTOGRAPHIC VAULT (JVault Advanced - Universal OS Edition)
+Supported Platforms: macOS (Darwin), Arch Linux, Ubuntu, Kali, Parrot OS, Windows 10/11, FreeBSD, OpenBSD
 Developer: Japhary Said Japhary (Cybersecurity Specialist & IT Systems Architect)
 Repository: https://github.com/japhary0/Jpassword_manager.git
 """
@@ -37,7 +37,7 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-# Enable VT100 ANSI Escape Sequence colors natively on Windows 10/11 CMD/PowerShell
+# Enable VT100 ANSI Escape Sequence colors natively on Windows
 if platform.system() == "Windows":
     try:
         kernel32 = ctypes.windll.kernel32
@@ -45,15 +45,22 @@ if platform.system() == "Windows":
     except Exception:
         pass
 
-# --- HARDENING: CROSS-PLATFORM MEMORY PROTECTION ---
+# --- HARDENING: UNIVERSAL CROSS-PLATFORM MEMORY PROTECTION ---
 def harden_process_memory():
-    """Disable core dumps and memory tracing on supported systems."""
+    """Disable core dumps and memory tracing on all supported operating systems."""
     sys_type = platform.system()
     if sys_type == "Linux":
         try:
             PR_SET_DUMPABLE = 4
             libc = ctypes.CDLL("libc.so.6")
             libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
+        except Exception:
+            pass
+    elif sys_type == "Darwin":
+        try:
+            # PT_DENY_ATTACH (31) stops debuggers (lldb/gdb) from attaching or inspecting process RAM on macOS
+            libc = ctypes.CDLL("libc.dylib")
+            libc.ptrace(31, 0, 0, 0)
         except Exception:
             pass
     elif sys_type == "Windows":
@@ -66,7 +73,7 @@ def harden_process_memory():
 class OSProtectionEngine:
     @staticmethod
     def apply_deletion_lock():
-        """Applies OS-level file locking requiring Sudo/Admin password to unlock or delete."""
+        """Applies OS-level file locking requiring Sudo/Admin elevation to unlock or delete."""
         sys_type = platform.system()
         script_path = os.path.abspath(__file__)
         db_path = os.path.abspath("encrypted_vault.db")
@@ -75,7 +82,6 @@ class OSProtectionEngine:
 
         if sys_type == "Linux":
             try:
-                # Apply Linux immutable attribute (+i)
                 cmd1 = ["sudo", "chattr", "+i", script_path]
                 cmd2 = ["sudo", "chattr", "+i", db_path] if os.path.exists(db_path) else None
 
@@ -91,9 +97,26 @@ class OSProtectionEngine:
             except Exception as e:
                 print(f"{Colors.FAIL}[-] Failed to set Linux protection: {e}{Colors.ENDC}")
 
+        elif sys_type in ("Darwin", "FreeBSD", "OpenBSD", "NetBSD"):
+            try:
+                # macOS and BSD systems use 'chflags uchg' (user immutable flag)
+                cmd1 = ["chflags", "uchg", script_path]
+                cmd2 = ["chflags", "uchg", db_path] if os.path.exists(db_path) else None
+
+                res1 = subprocess.run(cmd1, check=False)
+                if cmd2:
+                    subprocess.run(cmd2, check=False)
+
+                if res1.returncode == 0:
+                    print(f"{Colors.OKGREEN}[+] {sys_type} Immutable Flag (uchg) successfully applied.{Colors.ENDC}")
+                    print(f"{Colors.OKGREEN}[+] Script cannot be modified or deleted without unlocking flags!{Colors.ENDC}")
+                else:
+                    print(f"{Colors.WARNING}[!] Privilege elevation required for chflags.{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.FAIL}[-] Failed to set {sys_type} protection: {e}{Colors.ENDC}")
+
         elif sys_type == "Windows":
             try:
-                # Restrict permissions via Windows icacls
                 icacls_cmd = [
                     "powershell", "-Command",
                     f'Start-Process powershell -Verb RunAs -ArgumentList "icacls `"{script_path}`" /deny Users:(D,WO,WDAC)"'
@@ -116,6 +139,13 @@ class OSProtectionEngine:
                 subprocess.run(["sudo", "chattr", "-i", script_path], check=False)
                 if os.path.exists(db_path):
                     subprocess.run(["sudo", "chattr", "-i", db_path], check=False)
+            except Exception:
+                pass
+        elif sys_type in ("Darwin", "FreeBSD", "OpenBSD", "NetBSD"):
+            try:
+                subprocess.run(["chflags", "nouchg", script_path], check=False)
+                if os.path.exists(db_path):
+                    subprocess.run(["chflags", "nouchg", db_path], check=False)
             except Exception:
                 pass
         elif sys_type == "Windows":
@@ -397,17 +427,19 @@ def secure_shred_file(filepath: str, passes: int = 3):
             os.fsync(f.fileno())
     os.remove(filepath)
 
-# --- CROSS-PLATFORM VOLATILE CLIPBOARD MANAGER ---
+# --- UNIVERSAL VOLATILE CLIPBOARD MANAGER ---
 class VolatileClipboard:
     @staticmethod
     def _detect_system() -> Tuple[str, str]:
         sys_type = platform.system()
         if sys_type == "Windows":
             return "windows", "native"
-        elif sys_type == "Linux":
+        elif sys_type == "Darwin":
+            return "macos", "native"
+        elif sys_type in ("Linux", "FreeBSD", "OpenBSD", "NetBSD"):
             if os.environ.get("WAYLAND_DISPLAY"):
-                return "linux", "wayland"
-            return "linux", "x11"
+                return "unix", "wayland"
+            return "unix", "x11"
         return "unknown", "unknown"
 
     @classmethod
@@ -422,21 +454,31 @@ class VolatileClipboard:
                     pyperclip.copy(secret)
                     copied_ok = True
                 except ImportError:
-                    proc = subprocess.Popen(["powershell", "-command", "Set-Clipboard"], stdin=subprocess.PIPE)
+                    proc = subprocess.Popen(["powershell", "-command", "$input | Set-Clipboard"], stdin=subprocess.PIPE)
                     proc.communicate(input=secret.encode('utf-8'))
                     copied_ok = True
 
-            elif sys_type == "linux":
+            elif sys_type == "macos":
+                proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+                proc.communicate(input=secret.encode('utf-8'))
+                copied_ok = True
+
+            elif sys_type == "unix":
                 if env == "wayland":
                     proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
                     proc.communicate(input=secret.encode('utf-8'))
                     copied_ok = True
                 else:
-                    proc = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
-                    proc.communicate(input=secret.encode('utf-8'))
-                    copied_ok = True
+                    try:
+                        proc = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
+                        proc.communicate(input=secret.encode('utf-8'))
+                        copied_ok = True
+                    except FileNotFoundError:
+                        proc = subprocess.Popen(["xsel", "--clipboard", "--input"], stdin=subprocess.PIPE)
+                        proc.communicate(input=secret.encode('utf-8'))
+                        copied_ok = True
         except FileNotFoundError:
-            print(f"{Colors.WARNING}[!] Clipboard driver missing.{Colors.ENDC}")
+            print(f"{Colors.WARNING}[!] Clipboard driver missing (install pbcopy, wl-clipboard, xclip, or xsel).{Colors.ENDC}")
             return
 
         if copied_ok:
@@ -451,11 +493,17 @@ class VolatileClipboard:
                     pyperclip.copy("")
                 except ImportError:
                     subprocess.run(["powershell", "-command", "Clear-Clipboard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            elif sys_type == "linux":
+            elif sys_type == "macos":
+                proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+                proc.communicate(input=b"")
+            elif sys_type == "unix":
                 if env == "wayland":
                     subprocess.run(["wl-copy", "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
-                    subprocess.run(["xclip", "-selection", "clipboard", "/dev/null"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    try:
+                        subprocess.run(["xclip", "-selection", "clipboard", "/dev/null"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        subprocess.run(["xsel", "--clipboard", "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"\n{Colors.OKCYAN}[*] Volatile memory purge executed. Clipboard cleared.{Colors.ENDC}")
         except Exception:
             pass
@@ -475,7 +523,7 @@ async def main():
     db = JVaultDatabase()
 
     print(f"{Colors.HEADER}{Colors.BOLD}====================================================={Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}   JVAULT: ENTERPRISE CRYPTO ENGINE (CROSS-PLATFORM)  {Colors.ENDC}")
+    print(f"{Colors.HEADER}{Colors.BOLD}   JVAULT: ENTERPRISE CRYPTO ENGINE (UNIVERSAL OS)   {Colors.ENDC}")
     print(f"{Colors.HEADER}{Colors.BOLD}====================================================={Colors.ENDC}")
 
     if not db.is_initialized():
@@ -577,7 +625,7 @@ async def main():
             gc.collect()
 
         elif choice == '6':
-            target_pw = input(f"{Colors.BOLD}Enter password to audit against NIST SP 800-63B: {Colors.ENDC}").strip()
+            target_pw = input(f"{Colors.BOLD}Enter password to audit against NIST: {Colors.ENDC}").strip()
             if not target_pw:
                 print(f"{Colors.WARNING}[!] Password cannot be empty.{Colors.ENDC}")
                 continue
