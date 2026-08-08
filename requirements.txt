@@ -1,1 +1,6 @@
-cryptography>=42.0.0
+Plaintext
+# Core Cryptographic Dependencies
+cryptography>=41.0.0
+
+# Optional Cross-Platform Clipboard Fallback (Windows / Desktop Support)
+pyperclip>=1.8.2
