@@ -1,147 +1,142 @@
 Markdown
-# 🛡️ Jpassword_manager | Advanced CLI Cryptographic Vault (Cross-Platform)
+# JVault Advanced — Universal Enterprise Cryptographic Engine
 
-A high-security, zero-knowledge local password management utility built in Python. Engineered for full cross-platform compatibility across **Linux distributions** (Arch, Garuda, Kali, Debian, Ubuntu, Parrot OS) and **Windows 10/11**, JVault isolates credential assets inside an authenticated cryptographic store while enforcing OS-level process memory protection, anti-deletion locks, and volatile memory lifecycle controls.
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Security Standard](https://img.shields.io/badge/NIST-SP%20800--63B-brightgreen.svg)](https://pages.nist.gov/800-63-3/sp800-63b.html)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20BSD-orange.svg)]()
 
----
-
-## 🔥 Key Features
-
-* **Complete Cross-Platform Compatibility**: Native operational support engineered for Linux environments (Arch, Garuda, Kali, Ubuntu, Debian, Parrot OS) as well as Windows 10 and 11 environments.
-* **Authenticated Encryption**: All vault assets are secured using AES-256-GCM, providing both confidentiality and integrity verification against offline payload tampering.
-* **PBKDF2 Key Stretching**: Derived master keys use 600,000 iterations of PBKDF2-HMAC-SHA256 to heavily mitigate GPU-accelerated brute-force attacks.
-* **NIST SP 800-63B Compliance Engine (Options 5 & 6)**: Features a CSPRNG strong password generator and an interactive audit engine evaluating length thresholds, dictionary blacklists, repetitive character sequences, and adjusted entropy calculations aligned with NIST SP 800-63B security standards.
-* **Automated OS Anti-Deletion Locking (Option 8)**: Prevents unauthorized users or attackers with local access from deleting or tampering with the tool or database. Enforces elevated permission requirements via Linux `chattr +i` (Immutable attribute) or Windows NTFS ACL Deny rules (`icacls`) to restrict file removal without Administrator/Sudo elevation.
-* **Master-Authenticated Cryptographic Shredding (Option 9)**: Requires Master Password authentication to unlock system flags and execute a multi-pass secure random byte overwrite (shredding) of both the database and script files for complete self-destruction.
-* **Cross-Platform Volatile Clipboard Engine**: Asynchronously pipes decrypted secrets to `wl-clipboard` (Wayland), `xclip` (X11), or Windows CMD/PowerShell native clipboard APIs, executing an automated zero-out purge cycle after 15 seconds.
-* **Process Memory Hardening**: Invokes native platform bindings (`prctl / PR_SET_DUMPABLE` on Linux, `SetProcessMitigationPolicy` on Windows) to prevent memory dumps and local process tracing (`ptrace`).
-* **Zero-Knowledge Auth Canary**: Validates master password authenticity via an encrypted internal canary block without storing raw keys or static hashes on disk.
-* **Dynamic ANSI Color UI**: Cross-platform VT100-enabled terminal interface with distinct visual indicators for headers, successful operations, warnings, and cryptographic failures.
+**JVault** is a zero-knowledge, local cryptographic vault and security suite engineered for high-assurance credential storage, password audit, and anti-forensic protection. Written natively in Python, JVault operates across Linux, macOS, Windows, and BSD environments without external cloud dependencies.
 
 ---
 
-## 🛠️ Tech Stack
+## 🔒 Key Security Architecture
 
-| Component | Technology |
-| :--- | :--- |
-| **Language** | Python 3.10+ / Python 3.14 |
-| **Crypto Engine** | `python-cryptography` (OpenSSL Backend) |
-| **Database Engine** | Embedded SQLite3 (`encrypted_vault.db`) |
-| **OS Security Interfaces** | Linux C-bindings (`libc.so.6` via `ctypes`) / Windows API (`kernel32`) |
-| **OS Access Control** | Linux `chattr` (Ext4/Btrfs) / Windows NTFS `icacls` |
-| **Clipboard Systems** | `wl-clipboard` (Wayland), `xclip` (X11), Windows CMD / PowerShell Native API / `pyperclip` |
+* **AEAD Encryption Payload:** AES-256-GCM authenticated encryption with unique 96-bit Initialization Vectors (IV) generated per credential.
+* **Hardened Key Derivation:** KDF via PBKDF2-HMAC-SHA256 set to **600,000 iterations**, mitigating GPU/ASIC brute-force vectors.
+* **Zero-Knowledge Canary Check:** Local integrity canary prevents improper master password authentication or payload parsing without leaking secret state.
+* **Process Memory Protection:**
+  * **Linux:** `PR_SET_DUMPABLE` set to `0` via `libc.prctl` to prevent memory core dumps and process tracing.
+  * **macOS:** Native `ptrace(PT_DENY_ATTACH)` execution via `libc.dylib` to block debuggers (`lldb`, `gdb`) from attaching to memory space.
+  * **Windows:** Process Mitigation Policies enabled via `SetProcessMitigationPolicy` kernel calls.
+* **OS Anti-Deletion Lock Engine:**
+  * **Linux:** Applies immutable file flags (`chattr +i`).
+  * **macOS / BSD:** Applies user immutable flags (`chflags uchg`).
+  * **Windows:** Restricts delete/write permissions via NTFS Access Control Lists (`icacls /deny Users:(D,WO,WDAC)`).
+* **Volatile Clipboard Manager:** Auto-purges secrets from RAM/clipboard after a 15-second delay utilizing OS-native mechanisms (`pbcopy`, `wl-copy`, `xclip`, `xsel`, PowerShell).
+* **NIST SP 800-63B Password Engine:** Evaluates character entropy (bits), sequence repetition, positional patterns, and common dictionary blacklists.
+* **Multi-Pass Cryptographic Shredder:** Overwrites database and script files with random entropy passes prior to unlinking, preventing magnetic or physical drive recovery.
 
 ---
 
-## 🔒 Security Architecture Lifecycle
+## 🌐 Supported Operating Systems
 
-```text
-             ┌───────────────────────────┐
-             │   Master Password Input   │
-             └─────────────┬─────────────┘
-                           │
-                           ▼
-             ┌───────────────────────────┐
-             │ PBKDF2-HMAC-SHA256 (600k) │
-             └─────────────┬─────────────┘
-                           │
-                           ▼
-             ┌───────────────────────────┐
-             │ AES-256-GCM Key (in RAM)  │
-             └─────────────┬─────────────┘
-                           │
-    ┌──────────────────────┴──────────────────────┐
-    │                                             │
-    ▼                                             ▼
-┌─────────────────────────┐           ┌───────────────────────────┐
-│ Zero-Knowledge Canary   │           │ Encrypted SQLite Payload  │
-│ (Authenticity Verified) │           │ (AES-256-GCM + Nonce Tag) │
-└─────────────────────────┘           └─────────────┬─────────────┘
-                                                    │
-                                                    ▼
-                                      ┌───────────────────────────┐
-                                      │ Cross-Platform Volatile   │
-                                      │ Clipboard Sync (15s Purge)│
-                                      │ (Wayland / X11 / Win CMD) │
-                                      └─────────────┬─────────────┘
-                                                    │
-                                                    ▼
-                                      ┌───────────────────────────┐
-                                      │ Safe Exit / SIGINT        │
-                                      │ (del key + gc.collect)    │
-                                      └───────────────────────────┘
-💻 Quickstart & Setup
-1. Install System Clipboard Dependencies
-🦅 Arch Linux & Garuda Linux
-Bash
-# Wayland (Garuda / Arch default)
-sudo pacman -S wl-clipboard
+| OS Family | Distribution / Version | Clipboard Backend | Deletion Lock Method |
+| :--- | :--- | :--- | :--- |
+| **Linux** | Arch, Ubuntu, Kali, Debian, Parrot OS, Fedora | `wl-copy` (Wayland) / `xclip` / `xsel` (X11) | `chattr +i` |
+| **macOS** | macOS 10.15+ (Intel & Apple Silicon) | `pbcopy` | `chflags uchg` |
+| **Windows** | Windows 10 / Windows 11 | PowerShell / `pyperclip` | `icacls` NTFS ACLs |
+| **BSD** | FreeBSD, OpenBSD, NetBSD | `xclip` / `xsel` | `chflags uchg` |
 
-# X11 / Xorg
-sudo pacman -S xclip
-🐉 Kali Linux, Debian, Parrot OS & Ubuntu
-Bash
-sudo apt update
+---
 
-# Wayland
-sudo apt install wl-clipboard
+## 🚀 Installation & Setup
 
-# X11 / Xorg (Kali / Debian default)
-sudo apt install xclip
-🎩 Fedora Linux
-Bash
-# Wayland (Fedora default)
-sudo dnf install wl-clipboard
+### Requirements
+* **Python 3.8+**
+* `cryptography` Python package
 
-# X11 / Xorg
-sudo dnf install xclip
-🪟 Windows 10/11
-No external system packages are required. Clipboard management uses native Windows CMD/PowerShell integration or pyperclip:
+### 1. Linux (Debian, Ubuntu, Kali, Parrot, Arch, Garuda)
+```bash
+# Package dependencies
+# Debian/Ubuntu/Kali:
+sudo apt update && sudo apt install -y python3 python3-pip python3-venv xclip wl-clipboard git
 
-PowerShell
-pip install pyperclip
-2. Installation & Execution
-Bash
-# Clone repository
+# Arch/Garuda:
+sudo pacman -Syu --needed python python-pip xclip wl-clipboard git
+
+# Repository Setup
 git clone [https://github.com/japhary0/Jpassword_manager.git](https://github.com/japhary0/Jpassword_manager.git)
 cd Jpassword_manager
 
-# Create and activate virtual environment
-# Linux/macOS:
 python3 -m venv venv
 source venv/bin/activate
+pip install cryptography
+chmod +x jvault.py
+2. macOS (Darwin)
+Bash
+# Install Xcode Command Line Tools (if not present)
+xcode-select --install
 
-# Windows (PowerShell):
+# Repository Setup
+git clone [https://github.com/japhary0/Jpassword_manager.git](https://github.com/japhary0/Jpassword_manager.git)
+cd Jpassword_manager
+
+python3 -m venv venv
+source venv/bin/activate
+pip install cryptography
+chmod +x jvault.py
+3. Windows 10 / 11
+Open PowerShell as Administrator:
+
+PowerShell
+# Clone Repository
+git clone [https://github.com/japhary0/Jpassword_manager.git](https://github.com/japhary0/Jpassword_manager.git)
+cd Jpassword_manager
+
+# Set Up Virtual Environment
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 
-# Install cryptographic dependencies
+# Install Dependencies
+pip install cryptography pyperclip
+4. BSD (FreeBSD / OpenBSD)
+Bash
+# FreeBSD
+sudo pkg install -y python3 git xclip
+
+# OpenBSD
+sudo pkg_add python3 git xclip
+
+# Repository Setup
+git clone [https://github.com/japhary0/Jpassword_manager.git](https://github.com/japhary0/Jpassword_manager.git)
+cd Jpassword_manager
+
+python3 -m venv venv
+source venv/bin/activate
 pip install cryptography
+chmod +x jvault.py
+💻 Quick Start & Usage
+Execute the interactive CLI engine:
 
-# Run the vault engine
+Bash
 python3 jvault.py
-⚙️ Operating Instructions
-Upon execution, jvault.py provides an interactive command menu:
+Interactive Menu Overview:
+=====================================================
+   JVAULT: ENTERPRISE CRYPTO ENGINE (UNIVERSAL OS)   
+=====================================================
 
-Store Credential: Encrypts and saves secrets associated with a service name.
+--- MAIN MENU ---
+[1] Store Credential
+[2] Retrieve Credential (Copy to Clipboard)
+[3] List All Stored Services
+[4] Delete Credential
+[5] Generate Strong Password (CSPRNG)
+[6] Audit Password (NIST SP 800-63B Guidelines)
+[7] Change Master Password
+[8] ENABLE OS ANTI-DELETION LOCK (Requires Sudo/Admin)
+[9] UNINSTALL & SECURELY SHRED TOOL / VAULT
+[10] Safe Exit
+🛠️ Security & Threat Model Considerations
+Zero-Knowledge State: Master passwords are never written to disk or cached in persistent data structures. All memory references are explicitly scheduled for garbage collection (gc.collect()) upon authentication release.
 
-Retrieve Credential: Decrypts secret and copies it to clipboard with a 15-second auto-purge timer across Linux (Wayland/X11) and Windows (CMD/PowerShell).
+Offline Local Cryptography: All operations occur purely in local memory and SQLite database files (encrypted_vault.db). No network requests are made.
 
-List All Stored Services: Displays index of stored services and creation timestamps.
+Immutability Flags: Option 8 triggers OS kernel-level flags preventing rm -rf operations or non-privileged modification of the binary database.
 
-Delete Credential: Removes selected target credential from the database.
+🧑‍💻 Developer & Attribution
+Developer: Japhary Said Japhary (Cybersecurity Specialist & IT Systems Architect)
 
-Generate Strong Password: Creates a CSPRNG password compliant with NIST SP 800-63B standards.
+Repository: https://github.com/japhary0/Jpassword_manager.git
 
-Audit Password: Analyzes input passwords against NIST SP 800-63B guidelines (length thresholds, entropy calculations, dictionary checks).
-
-Change Master Password: Re-encrypts all database records under a new master key derivation.
-
-Enable OS Anti-Deletion Lock: Sets file immutability flags via Linux chattr +i or Windows NTFS ACL Deny rules to prevent unauthorized removal.
-
-Uninstall & Shred Tool: Authenticates Master Password and executes a multi-pass cryptographic wipe (shredding) of all script and database files.
-
-Safe Exit: Wipes volatile keys from RAM memory and exits cleanly.
-
-📄 License
-Distributed under the MIT License. See LICENSE for more information.
+License: MIT License
